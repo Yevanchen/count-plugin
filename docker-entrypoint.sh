@@ -5,6 +5,11 @@ set -e
 echo "Starting Dify Plugin Counter container..."
 echo "Current time: $(date)"
 
+# 确保日志目录和文件存在
+mkdir -p /app/logs
+touch /app/logs/cron.log
+echo "$(date): Container started" >> /app/logs/cron.log
+
 # 启动cron服务
 service cron start
 echo "Cron service started"
