@@ -1,0 +1,19 @@
+version: '3'
+
+services:
+  plugin-counter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      # 挂载本地目录以持久化数据（可选）
+      - ./data:/app/data
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    environment:
+      # 如果需要在AWS Cloudwatch中查看日志，可以设置
+      - AWS_REGION=us-east-1
+    # 默认模式：运行一次，然后保持容器运行以便按计划运行
+    # 可以换成 "run" 只运行一次后退出，或 "cron-only" 仅设置定时任务
+    command: "" 

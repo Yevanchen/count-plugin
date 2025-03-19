@@ -1,0 +1,43 @@
+# Python相关
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 日志和数据
+*.log
+logs/
+data/
+repos/
+tmp_repos/
+tmp_official_repos/
+plugin_history.json
+plugin_counter.log
+
+# Docker相关
+.dockerignore
+
+# 系统文件
+.DS_Store
+.env
+!.env.example
+.venv
+.idea/
+.vscode/ 
