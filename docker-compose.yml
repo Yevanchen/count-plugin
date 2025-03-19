@@ -9,9 +9,12 @@ services:
       # 挂载本地目录以持久化数据（可选）
       - ./data:/app/data
       - ./logs:/app/logs
-    env_file:
-      - .env
     environment:
+      # 在实际部署时设置这些环境变量
+      # - FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_WEBHOOK_ID
+      # - LOGS_DIR=/app/logs
+      # - REPOS_DIR=/app/repos
+      # - DATA_DIR=/app/data
       # 如果需要在AWS Cloudwatch中查看日志，可以设置
       - AWS_REGION=us-east-1
     # 默认模式：运行一次，然后保持容器运行以便按计划运行

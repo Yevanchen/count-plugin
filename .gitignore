@@ -36,8 +36,7 @@ plugin_counter.log
 
 # 系统文件
 .DS_Store
-.env
-!.env.example
+.env*
 .venv
 .idea/
 .vscode/ 

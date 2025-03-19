@@ -17,8 +17,8 @@
 使用docker-compose运行容器：
 
 ```bash
-# 修改docker-compose.yml中的飞书webhook地址
-# 然后启动容器
+# 通过环境变量设置飞书webhook地址
+export FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_WEBHOOK_ID
 docker-compose up -d
 ```
 
@@ -40,12 +40,14 @@ docker tag plugin-counter:latest <aws-account-id>.dkr.ecr.<region>.amazonaws.com
 docker push <aws-account-id>.dkr.ecr.<region>.amazonaws.com/plugin-counter:latest
 ```
 
-2. 在ECS控制台创建任务定义和服务，设置环境变量：
+2. 在ECS控制台创建任务定义和服务，直接在任务定义的环境变量部分设置：
 
 - `FEISHU_WEBHOOK`: 飞书机器人webhook地址
 - `LOGS_DIR`: 日志目录，默认 `/app/logs`
 - `REPOS_DIR`: 仓库存储目录，默认 `/app/repos`
 - `DATA_DIR`: 数据存储目录，默认 `/app/data`
+
+![AWS ECS环境变量设置示例](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/images/create-task-definition-console-env.png)
 
 ### AWS Lambda部署（定时触发）
 
