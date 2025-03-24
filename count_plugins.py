@@ -131,15 +131,18 @@ def ensure_repo_exists(repo_path, repo_url):
         # 如果是有效的Git仓库，更新它
         logger.info(f"Updating existing repository {repo_path}")
         try:
-            # 使用超时限制pull操作
-            pull_process = subprocess.Popen("git pull --depth 1", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = pull_process.communicate(timeout=GIT_OPERATION_TIMEOUT)
-            if pull_process.returncode != 0:
-                logger.warning(f"Failed to pull latest changes: {stderr.decode('utf-8')}")
+            # 先重置本地更改
+            subprocess.run("git reset --hard HEAD", shell=True, check=True)
+            # 使用fetch和reset而不是pull来更新
+            subprocess.run("git fetch origin main", shell=True, check=True)
+            subprocess.run("git reset --hard origin/main", shell=True, check=True)
+            return True
         except subprocess.TimeoutExpired:
-            logger.error(f"Git pull timed out after {GIT_OPERATION_TIMEOUT} seconds")
-            # 终止超时的进程
-            pull_process.kill()
+            logger.error(f"Git operations timed out after {GIT_OPERATION_TIMEOUT} seconds")
+            return False
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Failed to update repository: {str(e)}")
+            return False
         
         return True
     except Exception as e:
@@ -175,11 +178,13 @@ def count_plugins_community(repo_path):
         # Pull the latest changes
         os.chdir(repo_path)
         try:
-            pull_process = subprocess.Popen("git pull --depth 1", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = pull_process.communicate(timeout=GIT_OPERATION_TIMEOUT)
+            # 使用fetch和reset替代pull
+            subprocess.run("git fetch origin main", shell=True, check=True)
+            subprocess.run("git reset --hard origin/main", shell=True, check=True)
         except subprocess.TimeoutExpired:
-            logger.error(f"Git pull timed out in community repo after {GIT_OPERATION_TIMEOUT} seconds")
-            pull_process.kill()
+            logger.error(f"Git operations timed out in community repo after {GIT_OPERATION_TIMEOUT} seconds")
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Failed to update community repository: {str(e)}")
         
         total_plugins = 0
         processed_dirs = 0
@@ -277,11 +282,13 @@ def count_plugins_official(repo_path):
         # Pull the latest changes
         os.chdir(repo_path)
         try:
-            pull_process = subprocess.Popen("git pull --depth 1", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = pull_process.communicate(timeout=GIT_OPERATION_TIMEOUT)
+            # 使用fetch和reset替代pull
+            subprocess.run("git fetch origin main", shell=True, check=True)
+            subprocess.run("git reset --hard origin/main", shell=True, check=True)
         except subprocess.TimeoutExpired:
-            logger.error(f"Git pull timed out in official repo after {GIT_OPERATION_TIMEOUT} seconds")
-            pull_process.kill()
+            logger.error(f"Git operations timed out in official repo after {GIT_OPERATION_TIMEOUT} seconds")
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Failed to update official repository: {str(e)}")
         
         total_plugins = 0
         plugin_categories = ['agent-strategies', 'extensions', 'models', 'tools', 'migrations']
