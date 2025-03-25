@@ -415,26 +415,16 @@ def get_plugin_changes(repo_path, last_commit_hash=None):
         logger.error(f"Error getting plugin changes: {str(e)}")
         return [], []
 
-def save_last_commit(repo_path, history_file):
+def save_last_commit(repo_path, key_name, history):
     """保存最后一次检查的commit hash"""
     try:
         os.chdir(repo_path)
         result = subprocess.run(['git', 'rev-parse', 'HEAD'], 
                              capture_output=True, text=True)
         commit_hash = result.stdout.strip()
-        
-        history = {}
-        if os.path.exists(history_file):
-            with open(history_file, 'r') as f:
-                history = json.load(f)
-        
-        history['last_commit'] = commit_hash
-        
-        with open(history_file, 'w') as f:
-            json.dump(history, f)
-            
+        history[key_name] = commit_hash
     except Exception as e:
-        logger.error(f"Error saving last commit: {str(e)}")
+        logger.error(f"Error saving last commit for {key_name}: {str(e)}")
 
 def send_to_feishu(community_count, official_count, community_new, official_new, total_new, added_plugins, removed_plugins):
     """Send the plugin counts to Feishu webhook with detailed changes"""
@@ -526,24 +516,26 @@ def main():
         logger.info("Loading history and calculating new plugins...")
         history = load_history()
         community_new, official_new, total_new = calculate_new_plugins(history, community_count, official_count)
-        save_history(history)
         
-        # 发送通知前检查是否超时
-        if time.time() - start_time > overall_timeout:
-            logger.error("Process timed out before sending notification")
-            return
-            
-        # 仅当成功获取到插件数量时才发送通知
-        if community_count > 0 or official_count > 0:
-            logger.info("Sending notification to Feishu...")
-            try:
-                # 获取插件变更
-                added_plugins, removed_plugins = get_plugin_changes(DIFY_PLUGINS_REPO)
-                send_to_feishu(community_count, official_count, community_new, official_new, total_new, added_plugins, removed_plugins)
-            except Exception as e:
-                logger.error(f"Failed to send notification to Feishu: {str(e)}")
-        else:
-            logger.warning("Skipping Feishu notification because plugin count is zero")
+        # 获取插件变更
+        logger.info("Getting plugin changes...")
+        community_changes = get_plugin_changes(DIFY_PLUGINS_REPO, history.get('community_last_commit'))
+        official_changes = get_plugin_changes(DIFY_OFFICIAL_PLUGINS_REPO, history.get('official_last_commit'))
+        
+        # 合并变更信息
+        added_plugins = community_changes[0] + official_changes[0]
+        removed_plugins = community_changes[1] + official_changes[1]
+        
+        # 保存当前commit hash
+        save_last_commit(DIFY_PLUGINS_REPO, 'community_last_commit', history)
+        save_last_commit(DIFY_OFFICIAL_PLUGINS_REPO, 'official_last_commit', history)
+        
+        # 发送通知
+        send_to_feishu(community_count, official_count, community_new, official_new, 
+                      total_new, added_plugins, removed_plugins)
+        
+        # 保存更新后的历史记录
+        save_history(history)
     
     except Exception as e:
         logger.error(f"Unexpected error in main process: {str(e)}")
