@@ -352,26 +352,30 @@ def calculate_new_plugins(history, community_count, official_count):
     
     return community_new, official_new, total_new
 
-def get_plugin_changes(repo_path, last_commit_hash=None):
-    """
-    获取仓库的插件变更信息
-    返回: (新增插件列表, 删除插件列表)
-    每个插件信息格式: {"author": "作者", "name": "插件名"}
-    """
+def get_repo_changes(repo_path):
+    """获取仓库更新前后的变更"""
     try:
         os.chdir(repo_path)
         
-        # 如果没有上次的commit hash，获取最近24小时的第一个commit
-        if not last_commit_hash:
-            cmd = ['git', 'log', '--since=24.hours', '--format=%H', '--reverse']
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            commits = result.stdout.strip().split('\n')
-            if not commits or not commits[0]:
-                return [], []
-            last_commit_hash = commits[0]
+        # 获取更新前的commit hash
+        before_update = subprocess.run(['git', 'rev-parse', 'HEAD'], 
+                                    capture_output=True, text=True).stdout.strip()
         
-        # 获取文件变更
-        cmd = ['git', 'diff', '--name-status', f'{last_commit_hash}..HEAD']
+        # 更新仓库
+        subprocess.run("git fetch origin main", shell=True, check=True)
+        subprocess.run("git reset --hard origin/main", shell=True, check=True)
+        
+        # 获取更新后的commit hash
+        after_update = subprocess.run(['git', 'rev-parse', 'HEAD'], 
+                                   capture_output=True, text=True).stdout.strip()
+        
+        # 如果commit hash相同，说明没有更新
+        if before_update == after_update:
+            logger.info("No updates in repository")
+            return [], []
+            
+        # 获取变更的文件
+        cmd = ['git', 'diff', '--name-status', f'{before_update}..{after_update}']
         result = subprocess.run(cmd, capture_output=True, text=True)
         changes = result.stdout.strip().split('\n')
         
@@ -382,7 +386,6 @@ def get_plugin_changes(repo_path, last_commit_hash=None):
             if not change:
                 continue
             
-            # 解析变更类型和路径
             parts = change.split('\t')
             if len(parts) != 2:
                 continue
@@ -397,7 +400,6 @@ def get_plugin_changes(repo_path, last_commit_hash=None):
             author = path_parts[0]
             plugin_name = path_parts[1]
             
-            # A: 新增, D: 删除, M: 修改
             if change_type.startswith('A'):
                 added_plugins.append({
                     "author": author,
@@ -412,19 +414,8 @@ def get_plugin_changes(repo_path, last_commit_hash=None):
         return added_plugins, removed_plugins
         
     except Exception as e:
-        logger.error(f"Error getting plugin changes: {str(e)}")
+        logger.error(f"Error getting repository changes: {str(e)}")
         return [], []
-
-def save_last_commit(repo_path, key_name, history):
-    """保存最后一次检查的commit hash"""
-    try:
-        os.chdir(repo_path)
-        result = subprocess.run(['git', 'rev-parse', 'HEAD'], 
-                             capture_output=True, text=True)
-        commit_hash = result.stdout.strip()
-        history[key_name] = commit_hash
-    except Exception as e:
-        logger.error(f"Error saving last commit for {key_name}: {str(e)}")
 
 def send_to_feishu(community_count, official_count, community_new, official_new, total_new, added_plugins, removed_plugins):
     """Send the plugin counts to Feishu webhook with detailed changes"""
@@ -434,16 +425,18 @@ def send_to_feishu(community_count, official_count, community_new, official_new,
         remaining_to_500 = max(0, 500 - total_count)
         
         # 构建变更详情
-        changes_text = ""
-        if added_plugins:
-            changes_text += "\nNew Plugins:\n"
-            for plugin in added_plugins:
-                changes_text += f"+ {plugin['author']}/{plugin['name']}\n"
-        
-        if removed_plugins:
-            changes_text += "\nRemoved Plugins:\n"
-            for plugin in removed_plugins:
-                changes_text += f"- {plugin['author']}/{plugin['name']}\n"
+        changes_text = "\nNo changes in last 24h"  # 默认显示无变更
+        if added_plugins or removed_plugins:  # 只有在有变更时才显示详细信息
+            changes_text = ""
+            if added_plugins:
+                changes_text += "\nNew Plugins:\n"
+                for plugin in added_plugins:
+                    changes_text += f"+ {plugin['author']}/{plugin['name']}\n"
+            
+            if removed_plugins:
+                changes_text += "\nRemoved Plugins:\n"
+                for plugin in removed_plugins:
+                    changes_text += f"- {plugin['author']}/{plugin['name']}\n"
         
         message = {
             "msg_type": "text",
@@ -517,18 +510,14 @@ def main():
         history = load_history()
         community_new, official_new, total_new = calculate_new_plugins(history, community_count, official_count)
         
-        # 获取插件变更
-        logger.info("Getting plugin changes...")
-        community_changes = get_plugin_changes(DIFY_PLUGINS_REPO, history.get('community_last_commit'))
-        official_changes = get_plugin_changes(DIFY_OFFICIAL_PLUGINS_REPO, history.get('official_last_commit'))
+        # 获取仓库变更
+        logger.info("Getting repository changes...")
+        community_changes = get_repo_changes(DIFY_PLUGINS_REPO)
+        official_changes = get_repo_changes(DIFY_OFFICIAL_PLUGINS_REPO)
         
         # 合并变更信息
         added_plugins = community_changes[0] + official_changes[0]
         removed_plugins = community_changes[1] + official_changes[1]
-        
-        # 保存当前commit hash
-        save_last_commit(DIFY_PLUGINS_REPO, 'community_last_commit', history)
-        save_last_commit(DIFY_OFFICIAL_PLUGINS_REPO, 'official_last_commit', history)
         
         # 发送通知
         send_to_feishu(community_count, official_count, community_new, official_new, 
