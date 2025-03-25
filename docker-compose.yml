@@ -11,12 +11,20 @@ services:
       - ./logs:/app/logs
     environment:
       # 在实际部署时设置这些环境变量
-      # - FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_WEBHOOK_ID
+      - FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_WEBHOOK_ID
       # - LOGS_DIR=/app/logs
       # - REPOS_DIR=/app/repos
       # - DATA_DIR=/app/data
       # 如果需要在AWS Cloudwatch中查看日志，可以设置
       - AWS_REGION=us-east-1
+    restart: always  # 添加自动重启策略
     # 默认模式：运行一次，然后保持容器运行以便按计划运行
     # 可以换成 "run" 只运行一次后退出，或 "cron-only" 仅设置定时任务
-    command: "" 
+    command: "cron-only"  # 使用cron-only模式
+
+# 添加 cron 任务
+# 每天早上8点运行统计脚本
+0 8 * * * cd /app && python count_plugins.py >> /app/logs/cron.log 2>&1
+
+# 每小时检查一次cron服务是否运行
+0 * * * * pgrep cron > /dev/null || service cron restart 

@@ -165,98 +165,61 @@ def get_commit_count_last_24h(repo_path):
 
 def count_plugins_community(repo_path):
     """
-    Count the number of plugins in the community repository according to the following rules:
-    1. Each subdirectory in a plugin directory counts as a plugin
-    2. A directory with .difypkg file also counts as a plugin
-    3. Multiple .difypkg files in a directory without subdirectories count as a single plugin
+    Count plugins in community repository with the following rules:
+    1. Each author has a top-level directory
+    2. Each subdirectory under author directory counts as one plugin
+    3. If author directory has no subdirs, count .difypkg files
     """
     if not os.path.exists(repo_path):
         logger.error(f"Repository path {repo_path} does not exist")
         return 0
     
     try:
-        # Pull the latest changes
+        # 更新仓库
         os.chdir(repo_path)
         try:
-            # 使用fetch和reset替代pull
             subprocess.run("git fetch origin main", shell=True, check=True)
             subprocess.run("git reset --hard origin/main", shell=True, check=True)
-        except subprocess.TimeoutExpired:
-            logger.error(f"Git operations timed out in community repo after {GIT_OPERATION_TIMEOUT} seconds")
         except subprocess.CalledProcessError as e:
             logger.warning(f"Failed to update community repository: {str(e)}")
         
         total_plugins = 0
-        processed_dirs = 0
-        max_dirs = 500  # 设置最大处理目录数，防止无限循环
-        
-        # Skip these directories as they're not plugin directories
         skip_dirs = ['.git', '.github', '.assets', 'logs']
         
-        # Get all immediate subdirectories (plugin author directories)
-        author_dirs = []
+        # 获取所有作者目录
         try:
             author_dirs = [d for d in os.listdir(repo_path) 
-                          if os.path.isdir(os.path.join(repo_path, d)) 
-                          and d not in skip_dirs 
-                          and not d.startswith('.')]
+                         if os.path.isdir(os.path.join(repo_path, d)) 
+                         and d not in skip_dirs 
+                         and not d.startswith('.')]
         except Exception as e:
             logger.error(f"Error listing directories in {repo_path}: {str(e)}")
             return 0
             
         for author_dir in author_dirs:
-            if processed_dirs >= max_dirs:
-                logger.warning(f"Reached maximum directory limit ({max_dirs}). Stopping count.")
-                break
-                
-            processed_dirs += 1
             author_path = os.path.join(repo_path, author_dir)
             
-            # Skip non-directories and special directories
-            if not os.path.isdir(author_path) or author_dir in skip_dirs or author_dir.startswith('.'):
-                continue
-            
-            logger.info(f"Checking author directory: {author_dir}")
-            
             try:
-                # Check each plugin directory under the author
-                plugin_dirs = []
-                try:
-                    plugin_dirs = [d for d in os.listdir(author_path) 
-                                   if os.path.isdir(os.path.join(author_path, d))]
-                except Exception as e:
-                    logger.error(f"Error listing directories in {author_path}: {str(e)}")
-                    continue
-                    
-                for plugin_dir in plugin_dirs:
-                    plugin_path = os.path.join(author_path, plugin_dir)
-                    
-                    # Skip non-directories
-                    if not os.path.isdir(plugin_path):
-                        continue
-                    
-                    # Count subdirectories and .difypkg files in this plugin directory
-                    has_subdirs = False
-                    difypkg_count = 0
-                    
-                    try:
-                        items = os.listdir(plugin_path)
-                        for item in items:
-                            item_path = os.path.join(plugin_path, item)
-                            if os.path.isdir(item_path):
-                                has_subdirs = True
-                                total_plugins += 1
-                                logger.info(f"  Found plugin subdirectory: {os.path.join(plugin_dir, item)}")
-                            elif item.endswith('.difypkg'):
-                                difypkg_count += 1
-                    except Exception as e:
-                        logger.error(f"Error processing plugin directory {plugin_path}: {str(e)}")
-                        continue
-                    
-                    # If there are no subdirectories but there are .difypkg files, count as one plugin
-                    if not has_subdirs and difypkg_count > 0:
-                        total_plugins += 1
-                        logger.info(f"  Found plugin with {difypkg_count} .difypkg files: {plugin_dir}")
+                # 获取作者目录下的所有内容
+                items = os.listdir(author_path)
+                
+                # 检查是否有子目录
+                subdirs = [d for d in items 
+                          if os.path.isdir(os.path.join(author_path, d))]
+                
+                if subdirs:
+                    # 如果有子目录，每个子目录算一个插件
+                    plugin_count = len(subdirs)
+                    logger.info(f"Author {author_dir}: {plugin_count} plugins from subdirectories")
+                    total_plugins += plugin_count
+                else:
+                    # 如果没有子目录，统计.difypkg文件数量
+                    difypkg_count = len([f for f in items 
+                                       if f.endswith('.difypkg')])
+                    if difypkg_count > 0:
+                        logger.info(f"Author {author_dir}: {difypkg_count} plugins from .difypkg files")
+                        total_plugins += difypkg_count
+                
             except Exception as e:
                 logger.error(f"Error processing author directory {author_dir}: {str(e)}")
                 continue
@@ -389,12 +352,108 @@ def calculate_new_plugins(history, community_count, official_count):
     
     return community_new, official_new, total_new
 
-def send_to_feishu(community_count, official_count, community_new, official_new, total_new):
-    """Send the plugin counts to Feishu webhook"""
+def get_plugin_changes(repo_path, last_commit_hash=None):
+    """
+    获取仓库的插件变更信息
+    返回: (新增插件列表, 删除插件列表)
+    每个插件信息格式: {"author": "作者", "name": "插件名"}
+    """
+    try:
+        os.chdir(repo_path)
+        
+        # 如果没有上次的commit hash，获取最近24小时的第一个commit
+        if not last_commit_hash:
+            cmd = ['git', 'log', '--since=24.hours', '--format=%H', '--reverse']
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            commits = result.stdout.strip().split('\n')
+            if not commits or not commits[0]:
+                return [], []
+            last_commit_hash = commits[0]
+        
+        # 获取文件变更
+        cmd = ['git', 'diff', '--name-status', f'{last_commit_hash}..HEAD']
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        changes = result.stdout.strip().split('\n')
+        
+        added_plugins = []
+        removed_plugins = []
+        
+        for change in changes:
+            if not change:
+                continue
+            
+            # 解析变更类型和路径
+            parts = change.split('\t')
+            if len(parts) != 2:
+                continue
+                
+            change_type, file_path = parts
+            path_parts = file_path.split('/')
+            
+            # 忽略非插件文件
+            if len(path_parts) < 2 or path_parts[0] in ['.git', '.github', '.assets', 'logs']:
+                continue
+            
+            author = path_parts[0]
+            plugin_name = path_parts[1]
+            
+            # A: 新增, D: 删除, M: 修改
+            if change_type.startswith('A'):
+                added_plugins.append({
+                    "author": author,
+                    "name": plugin_name
+                })
+            elif change_type.startswith('D'):
+                removed_plugins.append({
+                    "author": author,
+                    "name": plugin_name
+                })
+        
+        return added_plugins, removed_plugins
+        
+    except Exception as e:
+        logger.error(f"Error getting plugin changes: {str(e)}")
+        return [], []
+
+def save_last_commit(repo_path, history_file):
+    """保存最后一次检查的commit hash"""
+    try:
+        os.chdir(repo_path)
+        result = subprocess.run(['git', 'rev-parse', 'HEAD'], 
+                             capture_output=True, text=True)
+        commit_hash = result.stdout.strip()
+        
+        history = {}
+        if os.path.exists(history_file):
+            with open(history_file, 'r') as f:
+                history = json.load(f)
+        
+        history['last_commit'] = commit_hash
+        
+        with open(history_file, 'w') as f:
+            json.dump(history, f)
+            
+    except Exception as e:
+        logger.error(f"Error saving last commit: {str(e)}")
+
+def send_to_feishu(community_count, official_count, community_new, official_new, total_new, added_plugins, removed_plugins):
+    """Send the plugin counts to Feishu webhook with detailed changes"""
     try:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         total_count = community_count + official_count
         remaining_to_500 = max(0, 500 - total_count)
+        
+        # 构建变更详情
+        changes_text = ""
+        if added_plugins:
+            changes_text += "\nNew Plugins:\n"
+            for plugin in added_plugins:
+                changes_text += f"+ {plugin['author']}/{plugin['name']}\n"
+        
+        if removed_plugins:
+            changes_text += "\nRemoved Plugins:\n"
+            for plugin in removed_plugins:
+                changes_text += f"- {plugin['author']}/{plugin['name']}\n"
         
         message = {
             "msg_type": "text",
@@ -404,7 +463,7 @@ def send_to_feishu(community_count, official_count, community_new, official_new,
                     f"Total Plugins: {total_count}\n"
                     f"- Community Plugins: {community_count}\n"
                     f"- Official Plugins: {official_count}\n\n"
-                    f"New Plugins (24h): {total_new}\n\n"
+                    f"Changes in last 24h:{changes_text}\n"
                     f"Plugins needed to reach 500: {remaining_to_500}\n\n"
                     f"Repositories:\n"
                     f"- https://github.com/langgenius/dify-plugins\n"
@@ -413,19 +472,13 @@ def send_to_feishu(community_count, official_count, community_new, official_new,
             }
         }
         
-        # 添加超时设置
         response = requests.post(FEISHU_WEBHOOK, json=message, timeout=REQUEST_TIMEOUT)
         
         if response.status_code == 200:
             logger.info("Successfully sent message to Feishu")
         else:
             logger.error(f"Failed to send message to Feishu. Status code: {response.status_code}")
-            logger.error(f"Response: {response.text}")
     
-    except requests.Timeout:
-        logger.error(f"Timeout when sending message to Feishu (timeout={REQUEST_TIMEOUT}s)")
-    except requests.ConnectionError:
-        logger.error("Connection error when sending message to Feishu")
     except Exception as e:
         logger.error(f"Error sending message to Feishu: {str(e)}")
 
@@ -484,7 +537,9 @@ def main():
         if community_count > 0 or official_count > 0:
             logger.info("Sending notification to Feishu...")
             try:
-                send_to_feishu(community_count, official_count, community_new, official_new, total_new)
+                # 获取插件变更
+                added_plugins, removed_plugins = get_plugin_changes(DIFY_PLUGINS_REPO)
+                send_to_feishu(community_count, official_count, community_new, official_new, total_new, added_plugins, removed_plugins)
             except Exception as e:
                 logger.error(f"Failed to send notification to Feishu: {str(e)}")
         else:

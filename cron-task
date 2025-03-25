@@ -1,3 +1,7 @@
 # 每天早上8点运行统计脚本
-0 8 * * * root cd /app && python count_plugins.py >> /app/logs/cron.log 2>&1
+0 8 * * * cd /app && python count_plugins.py >> /app/logs/cron.log 2>&1
+
+# 每小时检查一次cron服务是否运行
+0 * * * * pgrep cron > /dev/null || service cron restart
+
 # 空行（必需） 
