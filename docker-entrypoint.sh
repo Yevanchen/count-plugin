@@ -25,7 +25,7 @@ fi
 
 # 保持容器运行并监控cron服务
 while true; do
-    if ! pgrep cron > /dev/null; then
+    if ! service cron status > /dev/null 2>&1; then
         echo "Cron service died, restarting..."
         service cron restart
     fi

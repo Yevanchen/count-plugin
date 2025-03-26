@@ -3,8 +3,8 @@ FROM python:3.9-slim
 # 设置工作目录
 WORKDIR /app
 
-# 安装git（用于克隆和更新仓库）
-RUN apt-get update && apt-get install -y git && \
+# 安装git和procps（用于克隆和更新仓库，以及进程管理）
+RUN apt-get update && apt-get install -y git procps && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
