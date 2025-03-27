@@ -1,9 +1,10 @@
 # 设置环境变量
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+PYTHONPATH=/app
 
 # 每天早上8点（北京时间）运行统计脚本
-0 0 * * * cd /app && /usr/local/bin/python3 count_plugins.py >> /app/logs/cron.log 2>&1
+0 0 * * * cd /app && /usr/local/bin/python3 /app/count_plugins.py >> /app/logs/cron.log 2>&1
 
 # 每小时检查一次cron服务是否运行
 0 * * * * pgrep cron > /dev/null || service cron restart
