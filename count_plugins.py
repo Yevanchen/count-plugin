@@ -53,7 +53,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # Paths
 DIFY_PLUGINS_REPO = os.path.join(REPOS_DIR, "dify-plugins")
 DIFY_OFFICIAL_PLUGINS_REPO = os.path.join(REPOS_DIR, "dify-official-plugins")
-FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK', "https://open.feishu.cn/open-apis/bot/v2/hook/70eb61f9-7b92-46ce-b462-0e544c1612dd")
+FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK', "https://open.feishu.cn/open-apis/bot/v2/hook/30c719f3-f9d2-4973-8b3b-1459ba86b403")
 HISTORY_FILE = os.path.join(DATA_DIR, "plugin_history.json")
 
 # 设置Git操作超时时间（秒）
