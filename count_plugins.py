@@ -147,6 +147,38 @@ def get_commit_count_last_24h(repo_path):
         logger.error(f"Error getting commit count: {str(e)}")
         return 0
 
+def update_repo(repo_path):
+    """集中处理仓库更新逻辑"""
+    try:
+        os.chdir(repo_path)
+        logger.info(f"Updating repository: {repo_path}")
+        
+        # 获取当前分支和HEAD
+        current_branch = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], 
+                                     capture_output=True, text=True).stdout.strip()
+        current_head = subprocess.run(['git', 'rev-parse', 'HEAD'], 
+                                   capture_output=True, text=True).stdout.strip()
+        logger.info(f"Current branch: {current_branch}, HEAD: {current_head}")
+        
+        # 获取36小时内的历史（24小时 + 12小时缓冲）
+        fetch_cmd = "git fetch --shallow-since='36 hours ago' origin main"
+        logger.info(f"Running command: {fetch_cmd}")
+        fetch_result = subprocess.run(fetch_cmd, shell=True, capture_output=True, text=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+        if fetch_result.stderr:
+            logger.info(f"Fetch stderr: {fetch_result.stderr}")
+        
+        # 重置到远程最新状态
+        reset_cmd = "git reset --hard origin/main"
+        logger.info(f"Running command: {reset_cmd}")
+        reset_result = subprocess.run(reset_cmd, shell=True, capture_output=True, text=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+        if reset_result.stderr:
+            logger.info(f"Reset stderr: {reset_result.stderr}")
+            
+        return True
+    except Exception as e:
+        logger.error(f"Failed to update repository: {str(e)}")
+        return False
+
 def count_plugins_community(repo_path):
     """
     Count plugins in community repository with the following rules:
@@ -159,14 +191,8 @@ def count_plugins_community(repo_path):
         return 0
     
     try:
-        # 更新仓库
+        # 不再在这里更新仓库
         os.chdir(repo_path)
-        try:
-            subprocess.run("git fetch origin main", shell=True, check=True)
-            subprocess.run("git reset --hard origin/main", shell=True, check=True)
-        except subprocess.CalledProcessError as e:
-            logger.warning(f"Failed to update community repository: {str(e)}")
-        
         total_plugins = 0
         skip_dirs = ['.git', '.github', '.assets', 'logs']
         
@@ -226,17 +252,8 @@ def count_plugins_official(repo_path):
         return 0
     
     try:
-        # Pull the latest changes
+        # 不再在这里更新仓库
         os.chdir(repo_path)
-        try:
-            # 使用fetch和reset替代pull
-            subprocess.run("git fetch origin main", shell=True, check=True)
-            subprocess.run("git reset --hard origin/main", shell=True, check=True)
-        except subprocess.TimeoutExpired:
-            logger.error(f"Git operations timed out in official repo after {GIT_OPERATION_TIMEOUT} seconds")
-        except subprocess.CalledProcessError as e:
-            logger.warning(f"Failed to update official repository: {str(e)}")
-        
         total_plugins = 0
         plugin_categories = ['agent-strategies', 'extensions', 'models', 'tools', 'migrations']
         
@@ -342,38 +359,6 @@ def get_repo_changes(repo_path):
         os.chdir(repo_path)
         logger.info(f"Checking changes for repository: {repo_path}")
         
-        # 获取当前分支
-        current_branch = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], 
-                                     capture_output=True, text=True).stdout.strip()
-        logger.info(f"Current branch: {current_branch}")
-        
-        # 获取当前HEAD
-        current_head = subprocess.run(['git', 'rev-parse', 'HEAD'], 
-                                   capture_output=True, text=True).stdout.strip()
-        logger.info(f"Current HEAD: {current_head}")
-        
-        # 获取远程更新并重置到最新状态
-        try:
-            logger.info("Fetching updates and resetting to latest...")
-            # 获取2天内的历史，保持和clone时一致
-            fetch_cmd = "git fetch --shallow-since='2 days ago' origin main"
-            logger.info(f"Running command: {fetch_cmd}")
-            fetch_result = subprocess.run(fetch_cmd, shell=True, capture_output=True, text=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
-            logger.info(f"Fetch output: {fetch_result.stdout}")
-            if fetch_result.stderr:
-                logger.info(f"Fetch stderr: {fetch_result.stderr}")
-            
-            # 重置到远程最新状态
-            reset_cmd = "git reset --hard origin/main"
-            logger.info(f"Running command: {reset_cmd}")
-            reset_result = subprocess.run(reset_cmd, shell=True, capture_output=True, text=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
-            logger.info(f"Reset output: {reset_result.stdout}")
-            if reset_result.stderr:
-                logger.info(f"Reset stderr: {reset_result.stderr}")
-        except Exception as e:
-            logger.error(f"Failed to update repository: {str(e)}")
-            return [], [], []
-
         # 获取24小时前的时间点
         since_time = int((datetime.now() - timedelta(hours=24)).timestamp())
         since_time_str = datetime.fromtimestamp(since_time).strftime('%Y-%m-%d %H:%M:%S')
@@ -571,15 +556,15 @@ def main():
             logger.error("Process timed out after ensuring repositories")
             return
             
+        # 更新仓库
+        logger.info("Updating repositories...")
+        if not update_repo(DIFY_PLUGINS_REPO) or not update_repo(DIFY_OFFICIAL_PLUGINS_REPO):
+            logger.error("Failed to update repositories, aborting")
+            return
+        
         # Count plugins
         logger.info("Counting plugins...")
         community_count = count_plugins_community(DIFY_PLUGINS_REPO) if community_repo_ok else 0
-        
-        # 再次检查是否超时
-        if time.time() - start_time > overall_timeout:
-            logger.error("Process timed out after counting community plugins")
-            return
-            
         official_count = count_plugins_official(DIFY_OFFICIAL_PLUGINS_REPO) if official_repo_ok else 0
         
         # Load history and calculate new plugins
