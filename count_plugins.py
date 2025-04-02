@@ -353,44 +353,34 @@ def calculate_new_plugins(history, community_count, official_count):
     return community_new, official_new, total_new
 
 def get_repo_changes(repo_path):
-    """获取仓库更新前后的变更"""
+    """获取仓库最近24小时的变更"""
     try:
         os.chdir(repo_path)
         
-        # 获取更新前的commit hash
-        before_update = subprocess.run(['git', 'rev-parse', 'HEAD'], 
-                                    capture_output=True, text=True).stdout.strip()
+        # 获取24小时前的时间点
+        since_time = (datetime.now() - timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
         
-        # 更新仓库
-        subprocess.run("git fetch origin main", shell=True, check=True)
-        subprocess.run("git reset --hard origin/main", shell=True, check=True)
-        
-        # 获取更新后的commit hash
-        after_update = subprocess.run(['git', 'rev-parse', 'HEAD'], 
-                                   capture_output=True, text=True).stdout.strip()
-        
-        # 如果commit hash相同，说明没有更新
-        if before_update == after_update:
-            logger.info("No updates in repository")
-            return [], []
-            
-        # 获取变更的文件
-        cmd = ['git', 'diff', '--name-status', f'{before_update}..{after_update}']
+        # 获取最近24小时的所有变更
+        cmd = ['git', 'log', '--since', since_time, '--name-status', '--no-merges']
         result = subprocess.run(cmd, capture_output=True, text=True)
         changes = result.stdout.strip().split('\n')
         
         added_plugins = []
         removed_plugins = []
         
-        for change in changes:
-            if not change:
-                continue
-            
-            parts = change.split('\t')
-            if len(parts) != 2:
+        current_commit = None
+        for line in changes:
+            if not line:
                 continue
                 
-            change_type, file_path = parts
+            if line.startswith('commit'):
+                current_commit = line.split()[1]
+                continue
+                
+            if '\t' not in line:
+                continue
+                
+            change_type, file_path = line.split('\t')
             path_parts = file_path.split('/')
             
             # 忽略非插件文件
@@ -400,16 +390,18 @@ def get_repo_changes(repo_path):
             author = path_parts[0]
             plugin_name = path_parts[1]
             
+            plugin_info = {
+                "author": author,
+                "name": plugin_name,
+                "commit": current_commit
+            }
+            
             if change_type.startswith('A'):
-                added_plugins.append({
-                    "author": author,
-                    "name": plugin_name
-                })
+                if plugin_info not in added_plugins:
+                    added_plugins.append(plugin_info)
             elif change_type.startswith('D'):
-                removed_plugins.append({
-                    "author": author,
-                    "name": plugin_name
-                })
+                if plugin_info not in removed_plugins:
+                    removed_plugins.append(plugin_info)
         
         return added_plugins, removed_plugins
         
