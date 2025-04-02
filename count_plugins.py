@@ -53,7 +53,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # Paths
 DIFY_PLUGINS_REPO = os.path.join(REPOS_DIR, "dify-plugins")
 DIFY_OFFICIAL_PLUGINS_REPO = os.path.join(REPOS_DIR, "dify-official-plugins")
-FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK', "https://open.feishu.cn/open-apis/bot/v2/hook/30c719f3-f9d2-4973-8b3b-1459ba86b403")
+FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK', "https://open.feishu.cn/open-apis/bot/v2/hook/70eb61f9-7b92-46ce-b462-0e544c1612dd")
 HISTORY_FILE = os.path.join(DATA_DIR, "plugin_history.json")
 
 # 设置Git操作超时时间（秒）
@@ -357,20 +357,45 @@ def get_repo_changes(repo_path):
     try:
         os.chdir(repo_path)
         
-        # 先同步远程仓库
+        # 获取当前分支
+        current_branch = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], 
+                                     capture_output=True, text=True).stdout.strip()
+        
+        # 获取当前HEAD
+        current_head = subprocess.run(['git', 'rev-parse', 'HEAD'], 
+                                   capture_output=True, text=True).stdout.strip()
+        
+        # 先只获取远程更新
         try:
             subprocess.run("git fetch origin main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
-            subprocess.run("git reset --hard origin/main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
         except Exception as e:
-            logger.error(f"Failed to sync repository: {str(e)}")
+            logger.error(f"Failed to fetch repository: {str(e)}")
             return [], []
 
-        # 获取当前时间24小时前的Unix时间戳
+        # 获取24小时前的时间点
         since_time = int((datetime.now() - timedelta(hours=24)).timestamp())
         
-        # 使用Unix时间戳来获取变更，这样更准确
-        cmd = ['git', 'log', f'--since={since_time}', '--name-status', '--no-merges', '--format=format:commit %H%n%at']
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # 获取远程main分支的最新commit
+        remote_head = subprocess.run(['git', 'rev-parse', 'origin/main'], 
+                                  capture_output=True, text=True).stdout.strip()
+        
+        # 如果远程和本地一样，直接获取最近24小时的变更
+        if current_head == remote_head:
+            cmd = ['git', 'log', f'--since={since_time}', '--name-status', '--no-merges', 
+                  '--format=format:commit %H%n%at']
+            result = subprocess.run(cmd, capture_output=True, text=True)
+        else:
+            # 如果不一样，获取从当前HEAD到远程HEAD的所有变更
+            cmd = ['git', 'log', f'--since={since_time}', '--name-status', '--no-merges', 
+                  '--format=format:commit %H%n%at', f'{current_head}..{remote_head}']
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            # 应用远程更新
+            try:
+                subprocess.run("git reset --hard origin/main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+            except Exception as e:
+                logger.error(f"Failed to reset repository: {str(e)}")
+                # 即使reset失败也继续处理已经获取到的变更
         
         if result.returncode != 0:
             logger.error(f"Failed to get git log: {result.stderr}")
@@ -410,10 +435,24 @@ def get_repo_changes(repo_path):
             # 忽略非插件文件
             if len(path_parts) < 2 or path_parts[0] in ['.git', '.github', '.assets', 'logs']:
                 continue
+                
+            # 只处理插件目录的变更
+            if repo_path.endswith('dify-plugins'):
+                # 社区插件仓库：每个作者一个目录
+                if len(path_parts) < 2:
+                    continue
+                author = path_parts[0]
+                plugin_name = path_parts[1]
+            else:
+                # 官方插件仓库：特定目录结构
+                if path_parts[0] not in ['agent-strategies', 'extensions', 'models', 'tools', 'migrations']:
+                    continue
+                author = path_parts[0]
+                plugin_name = path_parts[1] if len(path_parts) > 1 else ''
             
-            author = path_parts[0]
-            plugin_name = path_parts[1]
-            
+            if not plugin_name:  # 跳过空插件名
+                continue
+                
             plugin_info = {
                 "author": author,
                 "name": plugin_name,
