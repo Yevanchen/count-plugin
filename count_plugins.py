@@ -357,6 +357,12 @@ def get_repo_changes(repo_path):
     try:
         os.chdir(repo_path)
         
+        # 检查是否是首次运行（通过检查.git/shallow文件是否存在）
+        is_shallow = os.path.exists(os.path.join(repo_path, '.git', 'shallow'))
+        if is_shallow:
+            logger.info(f"Repository {repo_path} is a shallow clone, skipping change detection")
+            return [], []
+        
         # 获取当前分支
         current_branch = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], 
                                      capture_output=True, text=True).stdout.strip()
@@ -385,24 +391,26 @@ def get_repo_changes(repo_path):
                   '--format=format:commit %H%n%at']
             result = subprocess.run(cmd, capture_output=True, text=True)
         else:
-            # 如果不一样，获取从当前HEAD到远程HEAD的所有变更
-            cmd = ['git', 'log', f'--since={since_time}', '--name-status', '--no-merges', 
-                  '--format=format:commit %H%n%at', f'{current_head}..{remote_head}']
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            
-            # 应用远程更新
+            # 如果不一样，先应用远程更新
             try:
                 subprocess.run("git reset --hard origin/main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
             except Exception as e:
                 logger.error(f"Failed to reset repository: {str(e)}")
-                # 即使reset失败也继续处理已经获取到的变更
+                return [], []
+                
+            # 获取最近24小时的变更
+            cmd = ['git', 'log', f'--since={since_time}', '--name-status', '--no-merges', 
+                  '--format=format:commit %H%n%at']
+            result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
             logger.error(f"Failed to get git log: {result.stderr}")
             return [], []
             
         changes = result.stdout.strip().split('\n')
-        
+        if not changes or changes[0] == '':
+            return [], []
+            
         added_plugins = []
         removed_plugins = []
         
