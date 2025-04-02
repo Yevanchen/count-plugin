@@ -89,8 +89,8 @@ def ensure_repo_exists(repo_path, repo_url):
         os.chdir(parent_dir)
         
         try:
-            # 克隆时只获取最近2天的历史，足够用于检测24小时变更，同时避免下载过多历史
-            cmd = f"git clone --shallow-since='2 days ago' {repo_url} {os.path.basename(repo_path)}"
+            # 首次克隆时获取更多历史，确保能看到24小时内的变更
+            cmd = f"git clone --depth 30 {repo_url} {os.path.basename(repo_path)}"
             logger.info(f"Running command: {cmd}")
             
             clone_process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -98,14 +98,7 @@ def ensure_repo_exists(repo_path, repo_url):
                 stdout, stderr = clone_process.communicate(timeout=GIT_OPERATION_TIMEOUT)
                 if clone_process.returncode != 0:
                     logger.error(f"Git clone failed: {stderr.decode('utf-8')}")
-                    # 如果shallow clone失败，尝试普通的depth=1克隆
-                    logger.info("Trying fallback to --depth 1 clone...")
-                    cmd = f"git clone --depth 1 {repo_url} {os.path.basename(repo_path)}"
-                    clone_process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    stdout, stderr = clone_process.communicate(timeout=GIT_OPERATION_TIMEOUT)
-                    if clone_process.returncode != 0:
-                        logger.error(f"Fallback clone also failed: {stderr.decode('utf-8')}")
-                        return False
+                    return False
             except subprocess.TimeoutExpired:
                 logger.error(f"Git clone timed out after {GIT_OPERATION_TIMEOUT} seconds")
                 clone_process.kill()
@@ -140,24 +133,18 @@ def ensure_repo_exists(repo_path, repo_url):
         try:
             # 先重置本地更改
             subprocess.run("git reset --hard HEAD", shell=True, check=True)
-            # 获取最近2天的历史
-            subprocess.run("git fetch --shallow-since='2 days ago' origin main", shell=True, check=True)
+            # 获取更新
+            subprocess.run("git fetch origin main", shell=True, check=True)
             subprocess.run("git reset --hard origin/main", shell=True, check=True)
+            # 确保有足够的历史
+            subprocess.run("git fetch --deepen 30", shell=True, check=True)
             return True
         except subprocess.TimeoutExpired:
             logger.error(f"Git operations timed out after {GIT_OPERATION_TIMEOUT} seconds")
             return False
         except subprocess.CalledProcessError as e:
             logger.warning(f"Failed to update repository: {str(e)}")
-            # 如果fetch失败，尝试普通fetch
-            try:
-                logger.info("Trying fallback to simple fetch...")
-                subprocess.run("git fetch origin main", shell=True, check=True)
-                subprocess.run("git reset --hard origin/main", shell=True, check=True)
-                return True
-            except Exception as e:
-                logger.error(f"Fallback fetch also failed: {str(e)}")
-                return False
+            return False
         
         return True
     except Exception as e:
