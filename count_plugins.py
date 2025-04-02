@@ -12,13 +12,13 @@ import time
 
 # 设置资源限制，防止脚本使用过多资源导致服务器崩溃
 def set_resource_limits():
-    # 设置内存限制 (1GB)
+    # 设置内存限制 (2GB)
     MB = 1024 * 1024
     GB = 1024 * MB
-    resource.setrlimit(resource.RLIMIT_AS, (1 * GB, 1 * GB))
+    resource.setrlimit(resource.RLIMIT_AS, (2 * GB, 2 * GB))
     
-    # 设置CPU时间限制 (5分钟)
-    resource.setrlimit(resource.RLIMIT_CPU, (300, 300))
+    # 设置CPU时间限制 (10分钟)
+    resource.setrlimit(resource.RLIMIT_CPU, (600, 600))
 
 # 超时处理装饰器
 def timeout_handler(signum, frame):
