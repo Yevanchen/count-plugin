@@ -367,19 +367,12 @@ def get_repo_changes(repo_path):
         current_head = subprocess.run(['git', 'rev-parse', 'HEAD'], 
                                    capture_output=True, text=True).stdout.strip()
         
-        # 先只获取远程更新
+        # 获取远程更新
         try:
-            # 获取最近2天的历史
-            subprocess.run("git fetch --shallow-since='2 days ago' origin main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+            subprocess.run("git fetch origin main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
         except Exception as e:
             logger.error(f"Failed to fetch repository: {str(e)}")
-            # 如果fetch失败，尝试普通fetch
-            try:
-                logger.info("Trying fallback to simple fetch...")
-                subprocess.run("git fetch origin main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
-            except Exception as e:
-                logger.error(f"Fallback fetch also failed: {str(e)}")
-                return [], []
+            return [], []
 
         # 获取24小时前的时间点
         since_time = int((datetime.now() - timedelta(hours=24)).timestamp())
