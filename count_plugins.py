@@ -89,8 +89,8 @@ def ensure_repo_exists(repo_path, repo_url):
         os.chdir(parent_dir)
         
         try:
-            # 首次克隆时获取更多历史，确保能看到24小时内的变更
-            cmd = f"git clone --depth 30 {repo_url} {os.path.basename(repo_path)}"
+            # 获取3天内的历史，确保能覆盖24小时变更
+            cmd = f"git clone --shallow-since='3 days ago' {repo_url} {os.path.basename(repo_path)}"
             logger.info(f"Running command: {cmd}")
             
             clone_process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -133,11 +133,9 @@ def ensure_repo_exists(repo_path, repo_url):
         try:
             # 先重置本地更改
             subprocess.run("git reset --hard HEAD", shell=True, check=True)
-            # 获取更新
-            subprocess.run("git fetch origin main", shell=True, check=True)
+            # 获取更新，同时确保有3天的历史
+            subprocess.run("git fetch --shallow-since='3 days ago' origin main", shell=True, check=True)
             subprocess.run("git reset --hard origin/main", shell=True, check=True)
-            # 确保有足够的历史
-            subprocess.run("git fetch --deepen 30", shell=True, check=True)
             return True
         except subprocess.TimeoutExpired:
             logger.error(f"Git operations timed out after {GIT_OPERATION_TIMEOUT} seconds")
