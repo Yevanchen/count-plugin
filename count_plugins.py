@@ -89,8 +89,8 @@ def ensure_repo_exists(repo_path, repo_url):
         os.chdir(parent_dir)
         
         try:
-            # 克隆时获取最近7天的历史，足够用于检测24小时变更
-            cmd = f"git clone --shallow-since='7 days ago' {repo_url} {os.path.basename(repo_path)}"
+            # 克隆时只获取最近2天的历史，足够用于检测24小时变更，同时避免下载过多历史
+            cmd = f"git clone --shallow-since='2 days ago' {repo_url} {os.path.basename(repo_path)}"
             logger.info(f"Running command: {cmd}")
             
             clone_process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -98,10 +98,18 @@ def ensure_repo_exists(repo_path, repo_url):
                 stdout, stderr = clone_process.communicate(timeout=GIT_OPERATION_TIMEOUT)
                 if clone_process.returncode != 0:
                     logger.error(f"Git clone failed: {stderr.decode('utf-8')}")
-                    return False
+                    # 如果shallow clone失败，尝试普通的depth=1克隆
+                    logger.info("Trying fallback to --depth 1 clone...")
+                    cmd = f"git clone --depth 1 {repo_url} {os.path.basename(repo_path)}"
+                    clone_process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    stdout, stderr = clone_process.communicate(timeout=GIT_OPERATION_TIMEOUT)
+                    if clone_process.returncode != 0:
+                        logger.error(f"Fallback clone also failed: {stderr.decode('utf-8')}")
+                        return False
             except subprocess.TimeoutExpired:
                 logger.error(f"Git clone timed out after {GIT_OPERATION_TIMEOUT} seconds")
                 clone_process.kill()
+                return False
                 
             return True
         except Exception as e:
@@ -132,8 +140,8 @@ def ensure_repo_exists(repo_path, repo_url):
         try:
             # 先重置本地更改
             subprocess.run("git reset --hard HEAD", shell=True, check=True)
-            # 获取最近7天的历史
-            subprocess.run("git fetch --shallow-since='7 days ago' origin main", shell=True, check=True)
+            # 获取最近2天的历史
+            subprocess.run("git fetch --shallow-since='2 days ago' origin main", shell=True, check=True)
             subprocess.run("git reset --hard origin/main", shell=True, check=True)
             return True
         except subprocess.TimeoutExpired:
@@ -141,7 +149,15 @@ def ensure_repo_exists(repo_path, repo_url):
             return False
         except subprocess.CalledProcessError as e:
             logger.warning(f"Failed to update repository: {str(e)}")
-            return False
+            # 如果fetch失败，尝试普通fetch
+            try:
+                logger.info("Trying fallback to simple fetch...")
+                subprocess.run("git fetch origin main", shell=True, check=True)
+                subprocess.run("git reset --hard origin/main", shell=True, check=True)
+                return True
+            except Exception as e:
+                logger.error(f"Fallback fetch also failed: {str(e)}")
+                return False
         
         return True
     except Exception as e:
@@ -366,11 +382,17 @@ def get_repo_changes(repo_path):
         
         # 先只获取远程更新
         try:
-            # 获取最近7天的历史
-            subprocess.run("git fetch --shallow-since='7 days ago' origin main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+            # 获取最近2天的历史
+            subprocess.run("git fetch --shallow-since='2 days ago' origin main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
         except Exception as e:
             logger.error(f"Failed to fetch repository: {str(e)}")
-            return [], []
+            # 如果fetch失败，尝试普通fetch
+            try:
+                logger.info("Trying fallback to simple fetch...")
+                subprocess.run("git fetch origin main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+            except Exception as e:
+                logger.error(f"Fallback fetch also failed: {str(e)}")
+                return [], []
 
         # 获取24小时前的时间点
         since_time = int((datetime.now() - timedelta(hours=24)).timestamp())
