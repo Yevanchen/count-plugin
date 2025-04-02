@@ -377,7 +377,7 @@ def get_repo_changes(repo_path):
                 logger.info(f"Fetch stderr: {fetch_result.stderr}")
         except Exception as e:
             logger.error(f"Failed to fetch repository: {str(e)}")
-            return [], []
+            return [], [], []
 
         # 获取24小时前的时间点
         since_time = int((datetime.now() - timedelta(hours=24)).timestamp())
@@ -399,7 +399,7 @@ def get_repo_changes(repo_path):
                     logger.info(f"Reset stderr: {reset_result.stderr}")
             except Exception as e:
                 logger.error(f"Failed to reset repository: {str(e)}")
-                return [], []
+                return [], [], []
         
         # 获取最近24小时的变更
         logger.info("Getting changes in the last 24 hours...")
@@ -409,17 +409,18 @@ def get_repo_changes(repo_path):
         
         if result.returncode != 0:
             logger.error(f"Failed to get git log: {result.stderr}")
-            return [], []
+            return [], [], []
             
         changes = result.stdout.strip().split('\n')
         logger.info(f"Raw git log output:\n{result.stdout}")
         
         if not changes or changes[0] == '':
             logger.info("No changes found in git log output")
-            return [], []
+            return [], [], []
             
         added_plugins = []
         removed_plugins = []
+        modified_plugins = []  # 新增: 跟踪修改的插件
         
         current_commit = None
         current_commit_time = None
@@ -493,19 +494,24 @@ def get_repo_changes(repo_path):
                 if plugin_info not in removed_plugins:
                     removed_plugins.append(plugin_info)
                     logger.info(f"Removed plugin: {author}/{plugin_name}")
+            elif change_type.startswith('M'):  # 新增: 处理修改的插件
+                if plugin_info not in modified_plugins:
+                    modified_plugins.append(plugin_info)
+                    logger.info(f"Modified plugin: {author}/{plugin_name}")
         
         # 按时间排序，最新的在前
         added_plugins.sort(key=lambda x: x["time"], reverse=True)
         removed_plugins.sort(key=lambda x: x["time"], reverse=True)
+        modified_plugins.sort(key=lambda x: x["time"], reverse=True)
         
-        logger.info(f"Final results - Added plugins: {len(added_plugins)}, Removed plugins: {len(removed_plugins)}")
-        return added_plugins, removed_plugins
+        logger.info(f"Final results - Added plugins: {len(added_plugins)}, Removed plugins: {len(removed_plugins)}, Modified plugins: {len(modified_plugins)}")
+        return added_plugins, removed_plugins, modified_plugins
         
     except Exception as e:
         logger.error(f"Error getting repository changes: {str(e)}")
-        return [], []
+        return [], [], []
 
-def send_to_feishu(community_count, official_count, community_new, official_new, total_new, added_plugins, removed_plugins):
+def send_to_feishu(community_count, official_count, community_new, official_new, total_new, added_plugins, removed_plugins, modified_plugins):
     """Send the plugin counts to Feishu webhook with detailed changes"""
     try:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -514,7 +520,7 @@ def send_to_feishu(community_count, official_count, community_new, official_new,
         
         # 构建变更详情
         changes_text = "\nNo changes in last 24h"  # 默认显示无变更
-        if added_plugins or removed_plugins:  # 只有在有变更时才显示详细信息
+        if added_plugins or removed_plugins or modified_plugins:  # 只有在有变更时才显示详细信息
             changes_text = ""
             if added_plugins:
                 changes_text += "\nNew Plugins:\n"
@@ -525,6 +531,11 @@ def send_to_feishu(community_count, official_count, community_new, official_new,
                 changes_text += "\nRemoved Plugins:\n"
                 for plugin in removed_plugins:
                     changes_text += f"- {plugin['author']}/{plugin['name']}\n"
+                    
+            if modified_plugins:  # 新增: 显示修改的插件
+                changes_text += "\nModified Plugins:\n"
+                for plugin in modified_plugins:
+                    changes_text += f"* {plugin['author']}/{plugin['name']}\n"
         
         message = {
             "msg_type": "text",
@@ -606,10 +617,11 @@ def main():
         # 合并变更信息
         added_plugins = community_changes[0] + official_changes[0]
         removed_plugins = community_changes[1] + official_changes[1]
+        modified_plugins = community_changes[2] + official_changes[2]  # 新增: 合并修改的插件
         
         # 发送通知
         send_to_feishu(community_count, official_count, community_new, official_new, 
-                      total_new, added_plugins, removed_plugins)
+                      total_new, added_plugins, removed_plugins, modified_plugins)
         
         # 保存更新后的历史记录
         save_history(history)
