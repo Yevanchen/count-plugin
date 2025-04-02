@@ -357,27 +357,51 @@ def get_repo_changes(repo_path):
     try:
         os.chdir(repo_path)
         
-        # 获取24小时前的时间点
-        since_time = (datetime.now() - timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
+        # 先同步远程仓库
+        try:
+            subprocess.run("git fetch origin main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+            subprocess.run("git reset --hard origin/main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+        except Exception as e:
+            logger.error(f"Failed to sync repository: {str(e)}")
+            return [], []
+
+        # 获取当前时间24小时前的Unix时间戳
+        since_time = int((datetime.now() - timedelta(hours=24)).timestamp())
         
-        # 获取最近24小时的所有变更
-        cmd = ['git', 'log', '--since', since_time, '--name-status', '--no-merges']
+        # 使用Unix时间戳来获取变更，这样更准确
+        cmd = ['git', 'log', f'--since={since_time}', '--name-status', '--no-merges', '--format=format:commit %H%n%at']
         result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            logger.error(f"Failed to get git log: {result.stderr}")
+            return [], []
+            
         changes = result.stdout.strip().split('\n')
         
         added_plugins = []
         removed_plugins = []
         
         current_commit = None
+        current_commit_time = None
+        
         for line in changes:
             if not line:
                 continue
                 
-            if line.startswith('commit'):
+            if line.startswith('commit '):
                 current_commit = line.split()[1]
                 continue
                 
-            if '\t' not in line:
+            # 处理提交时间戳
+            if line.strip().isdigit():
+                current_commit_time = int(line.strip())
+                # 如果提交时间超过24小时，跳过
+                if current_commit_time < since_time:
+                    current_commit = None
+                    current_commit_time = None
+                continue
+                
+            if not current_commit or '\t' not in line:
                 continue
                 
             change_type, file_path = line.split('\t')
@@ -393,7 +417,8 @@ def get_repo_changes(repo_path):
             plugin_info = {
                 "author": author,
                 "name": plugin_name,
-                "commit": current_commit
+                "commit": current_commit,
+                "time": current_commit_time
             }
             
             if change_type.startswith('A'):
@@ -402,6 +427,10 @@ def get_repo_changes(repo_path):
             elif change_type.startswith('D'):
                 if plugin_info not in removed_plugins:
                     removed_plugins.append(plugin_info)
+        
+        # 按时间排序，最新的在前
+        added_plugins.sort(key=lambda x: x["time"], reverse=True)
+        removed_plugins.sort(key=lambda x: x["time"], reverse=True)
         
         return added_plugins, removed_plugins
         
