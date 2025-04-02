@@ -53,7 +53,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # Paths
 DIFY_PLUGINS_REPO = os.path.join(REPOS_DIR, "dify-plugins")
 DIFY_OFFICIAL_PLUGINS_REPO = os.path.join(REPOS_DIR, "dify-official-plugins")
-FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK', "https://open.feishu.cn/open-apis/bot/v2/hook/70eb61f9-7b92-46ce-b462-0e544c1612dd")
+FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK', "https://open.feishu.cn/open-apis/bot/v2/hook/30c719f3-f9d2-4973-8b3b-1459ba86b403")
 HISTORY_FILE = os.path.join(DATA_DIR, "plugin_history.json")
 
 # 设置Git操作超时时间（秒）
@@ -89,8 +89,8 @@ def ensure_repo_exists(repo_path, repo_url):
         os.chdir(parent_dir)
         
         try:
-            # 获取3天内的历史，确保能覆盖24小时变更
-            cmd = f"git clone --shallow-since='3 days ago' {repo_url} {os.path.basename(repo_path)}"
+            # 获取2天内的历史，确保能覆盖24小时变更，同时避免下载过多历史
+            cmd = f"git clone --shallow-since='2 days ago' {repo_url} {os.path.basename(repo_path)}"
             logger.info(f"Running command: {cmd}")
             
             clone_process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -127,22 +127,6 @@ def ensure_repo_exists(repo_path, repo_url):
             os.rename(repo_path, backup_dir)
             # 重新克隆
             return ensure_repo_exists(repo_path, repo_url)
-        
-        # 如果是有效的Git仓库，更新它
-        logger.info(f"Updating existing repository {repo_path}")
-        try:
-            # 先重置本地更改
-            subprocess.run("git reset --hard HEAD", shell=True, check=True)
-            # 获取更新，同时确保有3天的历史
-            subprocess.run("git fetch --shallow-since='3 days ago' origin main", shell=True, check=True)
-            subprocess.run("git reset --hard origin/main", shell=True, check=True)
-            return True
-        except subprocess.TimeoutExpired:
-            logger.error(f"Git operations timed out after {GIT_OPERATION_TIMEOUT} seconds")
-            return False
-        except subprocess.CalledProcessError as e:
-            logger.warning(f"Failed to update repository: {str(e)}")
-            return False
         
         return True
     except Exception as e:
@@ -368,38 +352,32 @@ def get_repo_changes(repo_path):
                                    capture_output=True, text=True).stdout.strip()
         logger.info(f"Current HEAD: {current_head}")
         
-        # 获取远程更新
+        # 获取远程更新并重置到最新状态
         try:
-            logger.info("Fetching updates from remote...")
-            fetch_result = subprocess.run("git fetch origin main", shell=True, capture_output=True, text=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+            logger.info("Fetching updates and resetting to latest...")
+            # 获取2天内的历史，保持和clone时一致
+            fetch_cmd = "git fetch --shallow-since='2 days ago' origin main"
+            logger.info(f"Running command: {fetch_cmd}")
+            fetch_result = subprocess.run(fetch_cmd, shell=True, capture_output=True, text=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
             logger.info(f"Fetch output: {fetch_result.stdout}")
             if fetch_result.stderr:
                 logger.info(f"Fetch stderr: {fetch_result.stderr}")
+            
+            # 重置到远程最新状态
+            reset_cmd = "git reset --hard origin/main"
+            logger.info(f"Running command: {reset_cmd}")
+            reset_result = subprocess.run(reset_cmd, shell=True, capture_output=True, text=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+            logger.info(f"Reset output: {reset_result.stdout}")
+            if reset_result.stderr:
+                logger.info(f"Reset stderr: {reset_result.stderr}")
         except Exception as e:
-            logger.error(f"Failed to fetch repository: {str(e)}")
+            logger.error(f"Failed to update repository: {str(e)}")
             return [], [], []
 
         # 获取24小时前的时间点
         since_time = int((datetime.now() - timedelta(hours=24)).timestamp())
         since_time_str = datetime.fromtimestamp(since_time).strftime('%Y-%m-%d %H:%M:%S')
         logger.info(f"Checking changes since: {since_time_str}")
-        
-        # 获取远程main分支的最新commit
-        remote_head = subprocess.run(['git', 'rev-parse', 'origin/main'], 
-                                  capture_output=True, text=True).stdout.strip()
-        logger.info(f"Remote HEAD: {remote_head}")
-        
-        # 如果远程和本地不一样，先应用远程更新
-        if current_head != remote_head:
-            logger.info("Local and remote HEADs differ, updating local...")
-            try:
-                reset_result = subprocess.run("git reset --hard origin/main", shell=True, capture_output=True, text=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
-                logger.info(f"Reset output: {reset_result.stdout}")
-                if reset_result.stderr:
-                    logger.info(f"Reset stderr: {reset_result.stderr}")
-            except Exception as e:
-                logger.error(f"Failed to reset repository: {str(e)}")
-                return [], [], []
         
         # 获取最近24小时的变更
         logger.info("Getting changes in the last 24 hours...")
