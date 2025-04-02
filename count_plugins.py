@@ -356,38 +356,53 @@ def get_repo_changes(repo_path):
     """获取仓库最近24小时的变更"""
     try:
         os.chdir(repo_path)
+        logger.info(f"Checking changes for repository: {repo_path}")
         
         # 获取当前分支
         current_branch = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], 
                                      capture_output=True, text=True).stdout.strip()
+        logger.info(f"Current branch: {current_branch}")
         
         # 获取当前HEAD
         current_head = subprocess.run(['git', 'rev-parse', 'HEAD'], 
                                    capture_output=True, text=True).stdout.strip()
+        logger.info(f"Current HEAD: {current_head}")
         
         # 获取远程更新
         try:
-            subprocess.run("git fetch origin main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+            logger.info("Fetching updates from remote...")
+            fetch_result = subprocess.run("git fetch origin main", shell=True, capture_output=True, text=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+            logger.info(f"Fetch output: {fetch_result.stdout}")
+            if fetch_result.stderr:
+                logger.info(f"Fetch stderr: {fetch_result.stderr}")
         except Exception as e:
             logger.error(f"Failed to fetch repository: {str(e)}")
             return [], []
 
         # 获取24小时前的时间点
         since_time = int((datetime.now() - timedelta(hours=24)).timestamp())
+        since_time_str = datetime.fromtimestamp(since_time).strftime('%Y-%m-%d %H:%M:%S')
+        logger.info(f"Checking changes since: {since_time_str}")
         
         # 获取远程main分支的最新commit
         remote_head = subprocess.run(['git', 'rev-parse', 'origin/main'], 
                                   capture_output=True, text=True).stdout.strip()
+        logger.info(f"Remote HEAD: {remote_head}")
         
         # 如果远程和本地不一样，先应用远程更新
         if current_head != remote_head:
+            logger.info("Local and remote HEADs differ, updating local...")
             try:
-                subprocess.run("git reset --hard origin/main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+                reset_result = subprocess.run("git reset --hard origin/main", shell=True, capture_output=True, text=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+                logger.info(f"Reset output: {reset_result.stdout}")
+                if reset_result.stderr:
+                    logger.info(f"Reset stderr: {reset_result.stderr}")
             except Exception as e:
                 logger.error(f"Failed to reset repository: {str(e)}")
                 return [], []
         
         # 获取最近24小时的变更
+        logger.info("Getting changes in the last 24 hours...")
         cmd = ['git', 'log', f'--since={since_time}', '--name-status', '--no-merges', 
                '--format=format:commit %H%n%at']
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -397,7 +412,10 @@ def get_repo_changes(repo_path):
             return [], []
             
         changes = result.stdout.strip().split('\n')
+        logger.info(f"Raw git log output:\n{result.stdout}")
+        
         if not changes or changes[0] == '':
+            logger.info("No changes found in git log output")
             return [], []
             
         added_plugins = []
@@ -406,19 +424,24 @@ def get_repo_changes(repo_path):
         current_commit = None
         current_commit_time = None
         
+        logger.info("Processing changes...")
         for line in changes:
             if not line:
                 continue
                 
             if line.startswith('commit '):
                 current_commit = line.split()[1]
+                logger.info(f"Processing commit: {current_commit}")
                 continue
                 
             # 处理提交时间戳
             if line.strip().isdigit():
                 current_commit_time = int(line.strip())
+                commit_time_str = datetime.fromtimestamp(current_commit_time).strftime('%Y-%m-%d %H:%M:%S')
+                logger.info(f"Commit time: {commit_time_str}")
                 # 如果提交时间超过24小时，跳过
                 if current_commit_time < since_time:
+                    logger.info(f"Skipping commit {current_commit} - too old")
                     current_commit = None
                     current_commit_time = None
                 continue
@@ -427,10 +450,13 @@ def get_repo_changes(repo_path):
                 continue
                 
             change_type, file_path = line.split('\t')
+            logger.info(f"Change type: {change_type}, File: {file_path}")
+            
             path_parts = file_path.split('/')
             
             # 忽略非插件文件
             if len(path_parts) < 2 or path_parts[0] in ['.git', '.github', '.assets', 'logs']:
+                logger.info(f"Skipping non-plugin file: {file_path}")
                 continue
                 
             # 只处理插件目录的变更
@@ -448,6 +474,7 @@ def get_repo_changes(repo_path):
                 plugin_name = path_parts[1] if len(path_parts) > 1 else ''
             
             if not plugin_name:  # 跳过空插件名
+                logger.info(f"Skipping empty plugin name for path: {file_path}")
                 continue
                 
             plugin_info = {
@@ -456,18 +483,22 @@ def get_repo_changes(repo_path):
                 "commit": current_commit,
                 "time": current_commit_time
             }
+            logger.info(f"Found plugin change: {plugin_info}")
             
             if change_type.startswith('A'):
                 if plugin_info not in added_plugins:
                     added_plugins.append(plugin_info)
+                    logger.info(f"Added new plugin: {author}/{plugin_name}")
             elif change_type.startswith('D'):
                 if plugin_info not in removed_plugins:
                     removed_plugins.append(plugin_info)
+                    logger.info(f"Removed plugin: {author}/{plugin_name}")
         
         # 按时间排序，最新的在前
         added_plugins.sort(key=lambda x: x["time"], reverse=True)
         removed_plugins.sort(key=lambda x: x["time"], reverse=True)
         
+        logger.info(f"Final results - Added plugins: {len(added_plugins)}, Removed plugins: {len(removed_plugins)}")
         return added_plugins, removed_plugins
         
     except Exception as e:
