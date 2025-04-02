@@ -89,11 +89,10 @@ def ensure_repo_exists(repo_path, repo_url):
         os.chdir(parent_dir)
         
         try:
-            # 使用带超时的克隆命令
-            cmd = f"git clone --depth 1 {repo_url} {os.path.basename(repo_path)}"
+            # 克隆时获取最近7天的历史，足够用于检测24小时变更
+            cmd = f"git clone --shallow-since='7 days ago' {repo_url} {os.path.basename(repo_path)}"
             logger.info(f"Running command: {cmd}")
             
-            # 使用timeout命令限制Git操作时间
             clone_process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:
                 stdout, stderr = clone_process.communicate(timeout=GIT_OPERATION_TIMEOUT)
@@ -133,8 +132,8 @@ def ensure_repo_exists(repo_path, repo_url):
         try:
             # 先重置本地更改
             subprocess.run("git reset --hard HEAD", shell=True, check=True)
-            # 使用fetch和reset而不是pull来更新
-            subprocess.run("git fetch origin main", shell=True, check=True)
+            # 获取最近7天的历史
+            subprocess.run("git fetch --shallow-since='7 days ago' origin main", shell=True, check=True)
             subprocess.run("git reset --hard origin/main", shell=True, check=True)
             return True
         except subprocess.TimeoutExpired:
@@ -357,12 +356,6 @@ def get_repo_changes(repo_path):
     try:
         os.chdir(repo_path)
         
-        # 检查是否是首次运行（通过检查.git/shallow文件是否存在）
-        is_shallow = os.path.exists(os.path.join(repo_path, '.git', 'shallow'))
-        if is_shallow:
-            logger.info(f"Repository {repo_path} is a shallow clone, skipping change detection")
-            return [], []
-        
         # 获取当前分支
         current_branch = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], 
                                      capture_output=True, text=True).stdout.strip()
@@ -373,7 +366,8 @@ def get_repo_changes(repo_path):
         
         # 先只获取远程更新
         try:
-            subprocess.run("git fetch origin main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
+            # 获取最近7天的历史
+            subprocess.run("git fetch --shallow-since='7 days ago' origin main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
         except Exception as e:
             logger.error(f"Failed to fetch repository: {str(e)}")
             return [], []
@@ -385,23 +379,18 @@ def get_repo_changes(repo_path):
         remote_head = subprocess.run(['git', 'rev-parse', 'origin/main'], 
                                   capture_output=True, text=True).stdout.strip()
         
-        # 如果远程和本地一样，直接获取最近24小时的变更
-        if current_head == remote_head:
-            cmd = ['git', 'log', f'--since={since_time}', '--name-status', '--no-merges', 
-                  '--format=format:commit %H%n%at']
-            result = subprocess.run(cmd, capture_output=True, text=True)
-        else:
-            # 如果不一样，先应用远程更新
+        # 如果远程和本地不一样，先应用远程更新
+        if current_head != remote_head:
             try:
                 subprocess.run("git reset --hard origin/main", shell=True, check=True, timeout=GIT_OPERATION_TIMEOUT)
             except Exception as e:
                 logger.error(f"Failed to reset repository: {str(e)}")
                 return [], []
-                
-            # 获取最近24小时的变更
-            cmd = ['git', 'log', f'--since={since_time}', '--name-status', '--no-merges', 
-                  '--format=format:commit %H%n%at']
-            result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        # 获取最近24小时的变更
+        cmd = ['git', 'log', f'--since={since_time}', '--name-status', '--no-merges', 
+               '--format=format:commit %H%n%at']
+        result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
             logger.error(f"Failed to get git log: {result.stderr}")
