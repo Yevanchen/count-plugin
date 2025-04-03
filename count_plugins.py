@@ -352,11 +352,63 @@ def get_repo_changes(repo_path):
         os.chdir(repo_path)
         logger.info(f"Checking changes for repository: {repo_path}")
         
+        # 检查是否是首次运行或浅克隆
+        is_shallow = subprocess.run(['git', 'rev-parse', '--is-shallow-repository'], 
+                                capture_output=True, text=True).stdout.strip() == 'true'
+        
+        # 获取当前HEAD
+        current_head = subprocess.run(['git', 'rev-parse', 'HEAD'], 
+                                   capture_output=True, text=True).stdout.strip()
+        logger.info(f"Current HEAD: {current_head}, Is shallow repo: {is_shallow}")
+        
         # 获取24小时前的时间点
         since_time = int((datetime.now() - timedelta(hours=24)).timestamp())
         since_time_str = datetime.fromtimestamp(since_time).strftime('%Y-%m-%d %H:%M:%S')
         logger.info(f"Checking changes since: {since_time_str}")
         
+        # 获取仓库中的所有插件路径
+        all_plugins = set()
+        if repo_path.endswith('dify-plugins'):
+            # 社区插件仓库
+            skip_dirs = ['.git', '.github', '.assets', 'logs']
+            author_dirs = [d for d in os.listdir(repo_path) 
+                         if os.path.isdir(os.path.join(repo_path, d)) 
+                         and d not in skip_dirs 
+                         and not d.startswith('.')]
+            
+            for author in author_dirs:
+                author_path = os.path.join(repo_path, author)
+                items = os.listdir(author_path)
+                
+                subdirs = [d for d in items if os.path.isdir(os.path.join(author_path, d))]
+                if subdirs:
+                    for plugin in subdirs:
+                        all_plugins.add(f"{author}/{plugin}")
+                else:
+                    for pkg in [f for f in items if f.endswith('.difypkg')]:
+                        all_plugins.add(f"{author}/{pkg}")
+        else:
+            # 官方插件仓库
+            categories = ['agent-strategies', 'extensions', 'models', 'tools', 'migrations']
+            for category in categories:
+                category_path = os.path.join(repo_path, category)
+                if not os.path.isdir(category_path):
+                    continue
+                    
+                plugins = [d for d in os.listdir(category_path) 
+                          if os.path.isdir(os.path.join(category_path, d))]
+                for plugin in plugins:
+                    all_plugins.add(f"{category}/{plugin}")
+        
+        # 如果是浅克隆并且首次运行，不报告任何插件变更
+        first_run_file = os.path.join(DATA_DIR, f"{os.path.basename(repo_path)}_first_run")
+        if is_shallow and not os.path.exists(first_run_file):
+            logger.info(f"First run with shallow clone for {repo_path}, skipping change detection")
+            # 创建首次运行标记文件
+            with open(first_run_file, 'w') as f:
+                f.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            return [], [], []
+            
         # 获取最近24小时的变更
         logger.info("Getting changes in the last 24 hours...")
         cmd = ['git', 'log', f'--since={since_time}', '--name-status', '--no-merges', 
@@ -442,23 +494,30 @@ def get_repo_changes(repo_path):
             }
             logger.info(f"Found plugin change: {plugin_info}")
             
+            plugin_path = f"{author}/{plugin_name}"
+            
             if change_type.startswith('A'):
                 if plugin_info not in added_plugins:
                     added_plugins.append(plugin_info)
-                    logger.info(f"Added new plugin: {author}/{plugin_name}")
+                    logger.info(f"Added new plugin: {plugin_path}")
             elif change_type.startswith('D'):
                 if plugin_info not in removed_plugins:
                     removed_plugins.append(plugin_info)
-                    logger.info(f"Removed plugin: {author}/{plugin_name}")
-            elif change_type.startswith('M'):  # 新增: 处理修改的插件
+                    logger.info(f"Removed plugin: {plugin_path}")
+            elif change_type.startswith('M'):  # 处理修改的插件
                 if plugin_info not in modified_plugins:
                     modified_plugins.append(plugin_info)
-                    logger.info(f"Modified plugin: {author}/{plugin_name}")
+                    logger.info(f"Modified plugin: {plugin_path}")
         
         # 按时间排序，最新的在前
         added_plugins.sort(key=lambda x: x["time"], reverse=True)
         removed_plugins.sort(key=lambda x: x["time"], reverse=True)
         modified_plugins.sort(key=lambda x: x["time"], reverse=True)
+        
+        # 确保没有重复处理
+        modified_plugins = [p for p in modified_plugins 
+                          if f"{p['author']}/{p['name']}" not in [f"{a['author']}/{a['name']}" for a in added_plugins] 
+                          and f"{p['author']}/{p['name']}" not in [f"{r['author']}/{r['name']}" for r in removed_plugins]]
         
         logger.info(f"Final results - Added plugins: {len(added_plugins)}, Removed plugins: {len(removed_plugins)}, Modified plugins: {len(modified_plugins)}")
         return added_plugins, removed_plugins, modified_plugins
@@ -560,20 +619,31 @@ def main():
         community_count = count_plugins_community(DIFY_PLUGINS_REPO) if community_repo_ok else 0
         official_count = count_plugins_official(DIFY_OFFICIAL_PLUGINS_REPO) if official_repo_ok else 0
         
+        # 检查是否是首次运行
+        first_run = False
+        if not os.path.exists(HISTORY_FILE):
+            logger.info("First run detected, creating baseline only")
+            first_run = True
+            
         # Load history and calculate new plugins
         logger.info("Loading history and calculating new plugins...")
         history = load_history()
         community_new, official_new, total_new = calculate_new_plugins(history, community_count, official_count)
         
-        # 获取仓库变更
-        logger.info("Getting repository changes...")
-        community_changes = get_repo_changes(DIFY_PLUGINS_REPO)
-        official_changes = get_repo_changes(DIFY_OFFICIAL_PLUGINS_REPO)
-        
-        # 合并变更信息
-        added_plugins = community_changes[0] + official_changes[0]
-        removed_plugins = community_changes[1] + official_changes[1]
-        modified_plugins = community_changes[2] + official_changes[2]  # 新增: 合并修改的插件
+        # 如果是首次运行，跳过变更检测
+        if first_run:
+            logger.info("Skipping change detection for first run")
+            added_plugins, removed_plugins, modified_plugins = [], [], []
+        else:
+            # 获取仓库变更
+            logger.info("Getting repository changes...")
+            community_changes = get_repo_changes(DIFY_PLUGINS_REPO)
+            official_changes = get_repo_changes(DIFY_OFFICIAL_PLUGINS_REPO)
+            
+            # 合并变更信息
+            added_plugins = community_changes[0] + official_changes[0]
+            removed_plugins = community_changes[1] + official_changes[1]
+            modified_plugins = community_changes[2] + official_changes[2]
         
         # 发送通知
         send_to_feishu(community_count, official_count, community_new, official_new, 
