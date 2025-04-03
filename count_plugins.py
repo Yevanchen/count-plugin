@@ -306,50 +306,43 @@ def save_history(history):
 def calculate_new_plugins(history, community_count, official_count):
     """Calculate the number of new plugins in the last 24 hours"""
     today = datetime.now().strftime("%Y-%m-%d")
-    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     
     # Check if we have any history data
-    has_previous_data = False
-    
-    # Get the most recent date in history (if any)
-    community_dates = sorted([d for d in history["community"].keys()], reverse=True)
-    official_dates = sorted([d for d in history["official"].keys()], reverse=True)
-    
-    # Determine if we have usable history data (not just from today)
-    if community_dates and official_dates:
-        prev_dates = set(community_dates) | set(official_dates)
-        prev_dates.discard(today)  # Exclude today from previous dates
-        has_previous_data = len(prev_dates) > 0
-    
-    # If this is the first run or we only have today's data:
-    if not has_previous_data:
-        # Update history with today's counts but report 0 new plugins
+    if not history["community"] and not history["official"]:
+        # First time run, just record current counts
+        logger.info("First time run, recording baseline counts")
         history["community"][today] = community_count
         history["official"][today] = official_count
         return 0, 0, 0
+    
+    # Get the most recent counts excluding today
+    prev_community = 0
+    prev_official = 0
+    
+    community_dates = sorted([d for d in history["community"].keys() if d != today])
+    official_dates = sorted([d for d in history["official"].keys() if d != today])
+    
+    if community_dates:
+        prev_community = history["community"][community_dates[-1]]
         
-    # Get the most recent counts
-    community_previous = 0
-    official_previous = 0
-    
-    # Find the most recent data point before today
-    prev_community_dates = [d for d in community_dates if d != today]
-    prev_official_dates = [d for d in official_dates if d != today]
-    
-    if prev_community_dates:
-        community_previous = history["community"][prev_community_dates[0]]
-    
-    if prev_official_dates:
-        official_previous = history["official"][prev_official_dates[0]]
+    if official_dates:
+        prev_official = history["official"][official_dates[-1]]
     
     # Calculate the difference
-    community_new = max(0, community_count - community_previous)
-    official_new = max(0, official_count - official_previous)
+    community_new = max(0, community_count - prev_community)
+    official_new = max(0, official_count - prev_official)
     total_new = community_new + official_new
     
     # Update history with today's counts
     history["community"][today] = community_count
     history["official"][today] = official_count
+    
+    # Keep only last 30 days of history
+    for category in ["community", "official"]:
+        dates = sorted(history[category].keys())
+        if len(dates) > 30:
+            for old_date in dates[:-30]:
+                del history[category][old_date]
     
     return community_new, official_new, total_new
 
